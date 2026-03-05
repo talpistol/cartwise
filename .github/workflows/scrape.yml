@@ -1,0 +1,24 @@
+name: Scrape Prices
+
+on:
+  schedule:
+    - cron: "0 3 * * *"   # every day at 03:00 UTC (06:00 Israel time)
+  workflow_dispatch:        # allow manual run from GitHub Actions tab
+
+jobs:
+  scrape:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - run: npm install
+
+      - run: node scraper.js
+        env:
+          CF_API_TOKEN:       ${{ secrets.CF_API_TOKEN }}
+          CF_ACCOUNT_ID:      ${{ secrets.CF_ACCOUNT_ID }}
+          CF_KV_NAMESPACE_ID: ${{ secrets.CF_KV_NAMESPACE_ID }}
