@@ -1,7 +1,0 @@
-name = "cartwise-api"
-main = "worker.js"
-compatibility_date = "2024-01-01"
-
-[[kv_namespaces]]
-binding = "KV"
-id = "b00c3418b7454c6f8f431a1c65044cfc"
