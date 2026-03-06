@@ -1,0 +1,883 @@
+<!DOCTYPE html>
+<html lang="he" dir="rtl">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>CartWise 🛒</title>
+  <script src="https://unpkg.com/react@18/umd/react.development.js"></script>
+  <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
+  <style>*{box-sizing:border-box;margin:0;padding:0}body{font-family:'Segoe UI',Arial,sans-serif}</style>
+  <meta name="theme-color" content="#1e3a5f"/>
+  <meta name="mobile-web-app-capable" content="yes"/>
+  <meta name="apple-mobile-web-app-capable" content="yes"/>
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent"/>
+  <meta name="apple-mobile-web-app-title" content="CartWise"/>
+  <link rel="apple-touch-icon" href="icon.svg"/>
+  <link rel="manifest" href="manifest.json"/>
+</head>
+<body>
+  <div id="root"></div>
+  <script type="text/babel">
+    const { useState, useRef, useEffect } = React;
+
+    const GOOGLE_CLIENT_ID = "701840001643-qqh3ou80k3rfjsoa8q6a9fahq2sah06j.apps.googleusercontent.com";
+    const API = "https://cartwise-api.talpistol.workers.dev";
+    const ADMIN_EMAIL = "talpistol@gmail.com";
+    const SUPABASE_URL  = "https://ktmkxynjdkbnsvfetmkz.supabase.co";
+    const SUPABASE_ANON = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imt0bWt4eW5qZGtibnN2ZmV0bWt6Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzIzNTQxNDEsImV4cCI6MjA4NzkzMDE0MX0.02L92sqbHhS_bEsC22nIGYu5zqkUnJ_WF3iCehoYW6c";
+
+    // ── Supabase DB helpers ───────────────────────────────────────
+    function initSB(){ return window.supabase?.createClient(SUPABASE_URL, SUPABASE_ANON) || null; }
+
+    // Convert DB row → app list object
+    function rowToList(r){ return { id:r.id, name:r.name, vendor:r.vendor, branch:r.branch, shared:r.shared, shareToken:r.share_token, sharedWith:r.shared_with||[], owner:r.owner_email, items:r.items||[] }; }
+    // Convert app list → DB row
+    function listToRow(l){ return { id:l.id, name:l.name, vendor:l.vendor, branch:l.branch, shared:l.shared, share_token:l.shareToken, shared_with:l.sharedWith||[], owner_email:l.owner, items:l.items||[] }; }
+
+    async function dbLoad(sb, email){
+      const { data, error } = await sb.from("lists").select("*").or(`owner_email.eq.${email},shared_with.cs.{${email}}`).order("created_at");
+      if(error) throw error;
+      return (data||[]).map(rowToList);
+    }
+    async function dbSave(sb, list){ const { error } = await sb.from("lists").upsert(listToRow(list),{onConflict:"id"}); if(error) throw error; }
+    async function dbDelete(sb, id){ const { error } = await sb.from("lists").delete().eq("id",id); if(error) throw error; }
+
+    const DEFAULT_VENDORS = [
+      { id:"shufersal", name:"שופרסל", logo:"🟢", logoUrl:"", color:"#00a651", chainId:"7290027600007", enabled:true,
+        branches:[
+          { id:"144", name:"כפר סבא - הירוקה", city:"כפר סבא", openingHours:"07:00-23:00", storeId:"144", scraperEnabled:true,  enabled:true },
+          { id:"145", name:"כפר סבא - מרכז",   city:"כפר סבא", openingHours:"",            storeId:"145", scraperEnabled:false, enabled:true },
+          { id:"200", name:"רעננה",             city:"רעננה",   openingHours:"",            storeId:"200", scraperEnabled:false, enabled:true },
+          { id:"201", name:"הוד השרון",         city:"הוד השרון",openingHours:"",           storeId:"201", scraperEnabled:false, enabled:true },
+        ]},
+      { id:"osher-ad", name:"אושר עד", logo:"🟠", logoUrl:"", color:"#f47920", chainId:"7290103152017", enabled:true,
+        branches:[
+          { id:"031", name:"כפר סבא - דרך הים 9", city:"כפר סבא", openingHours:"", storeId:"031", scraperEnabled:true, enabled:true },
+        ]},
+      { id:"tiv-taam", name:"טיב טעם", logo:"🟡", logoUrl:"", color:"#f5a623", chainId:"7290873255550", enabled:true,
+        branches:[
+          { id:"093", name:"כפר סבא", city:"כפר סבא", openingHours:"", storeId:"093", scraperEnabled:true, enabled:true },
+        ]},
+    ];
+
+    const T = {
+      headerBg:"linear-gradient(135deg,#1e3a5f 0%,#2d5986 50%,#3a6fa8 100%)",
+      sidebarBg:"#f0f4f8", sidebarBorder:"#cdd5e0",
+      activeListBg:"#dbe8f5", activeListBorder:"#2d5986",
+      pageBg:"#e8edf3", cardBg:"#ffffff", cardBorder:"#dde3ec",
+      cardShadow:"0 1px 4px rgba(30,58,95,0.08)",
+      primary:"#2d5986", primaryLight:"#dbe8f5", primaryDark:"#1e3a5f", accent:"#4a90d9",
+      textMain:"#1a2a3a", textMid:"#3d5166", textSoft:"#6b82a0", textMuted:"#96aabf",
+      totalColor:"#1e3a5f",
+      danger:"#c0392b", dangerBg:"#fdf0ef", dangerBorder:"#f5c6c2",
+      success:"#1a6b3c", successBg:"#e6f4ee", successBorder:"#a8d5bc",
+      inputBorder:"#b0bfcf", sharedBadgeBg:"#d0e4f7", sharedBadgeText:"#1e4a7a",
+    };
+
+    function isValidEmail(e){ return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(e.trim()); }
+    function emojiFor(name=""){
+      if(name.includes("חלב")||name.includes("יוגורט")) return "🥛";
+      if(name.includes("לחם"))  return "🍞";
+      if(name.includes("ביצ"))  return "🥚";
+      if(name.includes("עוף")||name.includes("חזה")) return "🍗";
+      if(name.includes("דג")||name.includes("סלמון")) return "🐟";
+      if(name.includes("אורז")) return "🍚";
+      if(name.includes("פסטה")||name.includes("ספגטי")) return "🍝";
+      if(name.includes("שמן"))  return "🫙";
+      if(name.includes("עגבני")) return "🍅";
+      if(name.includes("שוקולד")) return "🍫";
+      if(name.includes("מיץ"))  return "🍊";
+      if(name.includes("קוטג")) return "🧀";
+      if(name.includes("בשר"))  return "🥩";
+      return "🛒";
+    }
+
+    const SAMPLE_PRODUCTS = [
+      {barcode:"7290000000001",name:"חלב תנובה 3% 1 ליטר",     company:"תנובה",    price:6.90},
+      {barcode:"7290000000002",name:"לחם אחיד פרוס",            company:"אנגל",     price:7.50},
+      {barcode:"7290000000003",name:"ביצים L גדולות 12 יח'",    company:"תרנגולת",  price:24.90},
+      {barcode:"7290000000004",name:"שמן זית כתית 750מל",       company:"יד מרדכי", price:39.90},
+      {barcode:"7290000000005",name:"עגבניות שרי 500 גרם",      company:"עמק הירדן",price:11.90},
+      {barcode:"7290000000006",name:"קוטג' תנובה 250 גרם",      company:"תנובה",    price:8.90},
+      {barcode:"7290000000007",name:"פסטה ספגטי 500 גרם",       company:"ברילה",    price:7.90},
+      {barcode:"7290000000008",name:'אורז בסמטי 1 ק"ג',         company:"לידא",     price:13.90},
+      {barcode:"7290000000009",name:"שוקולד מריר 70% 100 גרם",  company:"עלית",     price:9.90},
+      {barcode:"7290000000010",name:"מיץ תפוזים 1 ליטר",        company:"פריגת",    price:12.90},
+    ];
+    function tokenize(s){ return s.toLowerCase().split(/[\s\-\/,.()'\"]+/).filter(Boolean); }
+    function sampleSearch(q){ const qt=tokenize(q); return SAMPLE_PRODUCTS.filter(p=>{ const pt=tokenize(p.name+" "+p.company); return qt.every(t=>pt.some(w=>w===t||w.startsWith(t))); }).slice(0,8); }
+
+    const STORAGE_KEY="cartwise_lists_v2";
+    function loadLists(){ try{ const r=localStorage.getItem(STORAGE_KEY); return r?JSON.parse(r):[]; }catch{ return []; } }
+    function persistLists(ls){ try{ localStorage.setItem(STORAGE_KEY,JSON.stringify(ls)); }catch{} }
+
+    const inputStyle={ width:"100%",border:`2px solid ${T.inputBorder}`,borderRadius:10,padding:"10px 12px",fontSize:14,boxSizing:"border-box",outline:"none",background:"#fff",color:T.textMain };
+    const labelStyle={ display:"block",fontSize:13,fontWeight:600,color:T.textMid,marginBottom:6 };
+    const qtyBtn={ width:30,height:30,borderRadius:"50%",border:"none",background:T.primary,cursor:"pointer",fontWeight:700,fontSize:16,color:"#fff",display:"flex",alignItems:"center",justifyContent:"center" };
+
+    function EmailTagInput({ emails, onChange }) {
+      const [input,setInput]=useState(""); const [error,setError]=useState(""); const MAX=5;
+      function addEmail(raw){ const val=raw.trim().toLowerCase(); if(!val)return; if(!isValidEmail(val)){setError(`"${val}" אינה כתובת אימייל תקינה`);return;} if(emails.includes(val)){setError("אימייל זה כבר נוסף");return;} if(emails.length>=MAX){setError(`ניתן להוסיף עד ${MAX} כתובות בלבד`);return;} onChange([...emails,val]); setInput(""); setError(""); }
+      function removeEmail(e){ onChange(emails.filter(x=>x!==e)); setError(""); }
+      function handleKeyDown(e){ if(e.key==="Enter"||e.key===","||e.key===" "){e.preventDefault();addEmail(input);} if(e.key==="Backspace"&&!input&&emails.length>0)removeEmail(emails[emails.length-1]); }
+      return (
+        <div>
+          <div style={{border:`2px solid ${error?T.danger:T.inputBorder}`,borderRadius:10,padding:"6px 10px",background:"#fff",minHeight:44,display:"flex",flexWrap:"wrap",gap:6,alignItems:"center",cursor:"text"}} onClick={e=>e.currentTarget.querySelector("input")?.focus()}>
+            {emails.map(e=>(
+              <span key={e} style={{background:T.primaryLight,color:T.primaryDark,borderRadius:20,padding:"3px 10px 3px 8px",fontSize:12,fontWeight:600,display:"flex",alignItems:"center",gap:5}}>
+                {e}<button onClick={()=>removeEmail(e)} style={{background:"none",border:"none",cursor:"pointer",color:T.textSoft,fontSize:14,lineHeight:1,padding:0}}>✕</button>
+              </span>
+            ))}
+            {emails.length<MAX&&<input value={input} onChange={e=>{setInput(e.target.value);setError("");}} onKeyDown={handleKeyDown} onBlur={()=>{ if(input.trim())addEmail(input); }} placeholder={emails.length===0?"wife@gmail.com":"+ הוסף אימייל"} style={{border:"none",outline:"none",fontSize:13,flex:1,minWidth:140,background:"transparent",color:T.textMain}} type="email"/>}
+          </div>
+          {error&&<div style={{fontSize:11,color:T.danger,marginTop:4}}>⚠️ {error}</div>}
+          <div style={{fontSize:11,color:T.textMuted,marginTop:3}}>הקש Enter או פסיק להוספה · עד {MAX} כתובות</div>
+        </div>
+      );
+    }
+
+    function ConfirmDialog({ title,message,confirmLabel="אישור",confirmDanger=false,onConfirm,onCancel }) {
+      useEffect(()=>{
+        function onKey(e){ if(e.key==="Enter")onConfirm(); else if(e.key==="Escape")onCancel(); }
+        document.addEventListener("keydown",onKey);
+        return ()=>document.removeEventListener("keydown",onKey);
+      },[]);
+      return (
+        <div style={{position:"fixed",inset:0,background:"rgba(20,40,70,0.55)",zIndex:600,display:"flex",alignItems:"center",justifyContent:"center",padding:20}}>
+          <div dir="rtl" style={{background:"#fff",borderRadius:16,padding:24,maxWidth:360,width:"100%",boxShadow:"0 8px 32px rgba(20,40,80,0.2)"}}>
+            <div style={{fontWeight:700,fontSize:17,color:T.textMain,marginBottom:10}}>{title}</div>
+            <div style={{fontSize:14,color:T.textMid,marginBottom:20,lineHeight:1.6}}>{message}</div>
+            <div style={{display:"flex",gap:10,justifyContent:"flex-end"}}>
+              <button onClick={onCancel} style={{background:"#f5f7fa",color:T.textMid,border:`1px solid ${T.inputBorder}`,borderRadius:8,padding:"8px 16px",cursor:"pointer",fontWeight:600,fontSize:13}}>ביטול</button>
+              <button onClick={onConfirm} style={{background:confirmDanger?T.danger:T.primary,color:"#fff",border:"none",borderRadius:8,padding:"8px 16px",cursor:"pointer",fontWeight:700,fontSize:13}}>{confirmLabel}</button>
+            </div>
+          </div>
+        </div>
+      );
+    }
+
+    function Sheet({ onClose, children }) {
+      useEffect(()=>{
+        function onKey(e){ if(e.key==="Escape")onClose(); }
+        document.addEventListener("keydown",onKey);
+        return ()=>document.removeEventListener("keydown",onKey);
+      },[]);
+      return (
+        <div style={{position:"fixed",inset:0,background:"rgba(20,40,70,0.55)",zIndex:500,display:"flex",alignItems:"flex-end",justifyContent:"center"}} onClick={onClose}>
+          <div dir="rtl" style={{background:"#fff",width:"100%",maxWidth:480,borderRadius:"20px 20px 0 0",padding:"20px 20px 36px",animation:"slideUp .25s ease",maxHeight:"90vh",overflowY:"auto",position:"relative"}} onClick={e=>e.stopPropagation()}>
+            <button onClick={onClose} style={{position:"absolute",top:16,left:16,background:"#f0f4f8",border:"none",borderRadius:"50%",width:30,height:30,cursor:"pointer",fontSize:16,color:T.textSoft,display:"flex",alignItems:"center",justifyContent:"center"}}>✕</button>
+            <div style={{width:40,height:4,background:T.inputBorder,borderRadius:2,margin:"0 auto 18px"}}/>
+            {children}
+          </div>
+          <style>{`@keyframes slideUp{from{transform:translateY(100%)}to{transform:translateY(0)}}`}</style>
+        </div>
+      );
+    }
+
+    const LOGO_EMOJIS = ["🟢","🔴","🟠","🟤","🔵","🟡","🟣","⚫","⚪","🏪","🛒","🏬"];
+
+    function VendorFormContent({ initial, existingIds, onSave, onCancel }) {
+      const editing=!!initial;
+      const [id,setId]=useState(initial?.id||"");
+      const [name,setName]=useState(initial?.name||"");
+      const [logo,setLogo]=useState(initial?.logo||"🏪");
+      const [logoUrl,setLogoUrl]=useState(initial?.logoUrl||"");
+      const [color,setColor]=useState(initial?.color||"#2d5986");
+      const [chainId,setChainId]=useState(initial?.chainId||"");
+      const [error,setError]=useState("");
+      function handleSave(){
+        if(!name.trim()){setError("נא להזין שם רשת");return;}
+        const finalId=editing?initial.id:(id.trim()||name.trim().toLowerCase().replace(/\s+/g,"-").replace(/[^\w-]/g,""));
+        if(!editing&&existingIds.includes(finalId)){setError("מזהה זה כבר קיים");return;}
+        onSave({id:finalId,name:name.trim(),logo,logoUrl:logoUrl.trim(),color,chainId:chainId.trim(),enabled:initial?.enabled??true,branches:initial?.branches||[]});
+      }
+      return (
+        <div style={{display:"flex",flexDirection:"column",gap:14}}>
+          <div style={{fontWeight:700,fontSize:18,color:T.textMain}}>{editing?"✏️ עריכת רשת":"➕ רשת חדשה"}</div>
+          <div>
+            <label style={labelStyle}>שם הרשת *</label>
+            <input value={name} onChange={e=>{setName(e.target.value);setError("");}} style={{...inputStyle,borderColor:error?T.danger:T.inputBorder}} placeholder='שופרסל' autoFocus/>
+            {error&&<div style={{fontSize:11,color:T.danger,marginTop:4}}>⚠️ {error}</div>}
+          </div>
+          {!editing&&<div><label style={labelStyle}>מזהה (אוטומטי אם ריק)</label><input value={id} onChange={e=>setId(e.target.value.toLowerCase().replace(/\s/g,"-"))} style={inputStyle} placeholder="shufersal" dir="ltr"/></div>}
+          <div>
+            <label style={labelStyle}>לוגו</label>
+            <div style={{display:"flex",gap:6,flexWrap:"wrap",marginBottom:8}}>{LOGO_EMOJIS.map(e=><button key={e} onClick={()=>setLogo(e)} style={{fontSize:20,background:logo===e?T.primaryLight:"#f5f7fa",border:`2px solid ${logo===e?T.primary:T.inputBorder}`,borderRadius:8,padding:"4px 7px",cursor:"pointer"}}>{e}</button>)}</div>
+            <input value={logoUrl} onChange={e=>setLogoUrl(e.target.value)} style={inputStyle} placeholder="או URL לתמונה (מחליף אימוג'י)" dir="ltr" type="url"/>
+          </div>
+          <div>
+            <label style={labelStyle}>צבע מזהה</label>
+            <div style={{display:"flex",alignItems:"center",gap:10}}><input type="color" value={color} onChange={e=>setColor(e.target.value)} style={{width:40,height:36,borderRadius:6,border:`1px solid ${T.inputBorder}`,cursor:"pointer",padding:2}}/><span style={{fontSize:12,color:T.textSoft,fontFamily:"monospace"}}>{color}</span></div>
+          </div>
+          <div>
+            <label style={labelStyle}>Chain ID (מספר הרשת ב-XML)</label>
+            <input value={chainId} onChange={e=>setChainId(e.target.value)} style={inputStyle} placeholder="7290027600007" dir="ltr"/>
+            <div style={{fontSize:11,color:T.textMuted,marginTop:3}}>נמצא בשדה ChainId בקובץ ה-XML</div>
+          </div>
+          <div style={{display:"flex",gap:10}}>
+            <button onClick={onCancel} style={{flex:1,background:"#f5f7fa",color:T.textMid,border:`1px solid ${T.inputBorder}`,borderRadius:10,padding:12,cursor:"pointer",fontWeight:600}}>ביטול</button>
+            <button onClick={handleSave} style={{flex:2,background:T.headerBg,color:"#fff",border:"none",borderRadius:10,padding:12,cursor:"pointer",fontWeight:700}}>{editing?"שמור שינויים":"הוסף רשת"}</button>
+          </div>
+        </div>
+      );
+    }
+
+    function BranchFormContent({ initial, existingIds, onSave, onCancel }) {
+      const editing=!!initial;
+      const [name,setName]=useState(initial?.name||"");
+      const [city,setCity]=useState(initial?.city||"");
+      const [openingHours,setOpeningHours]=useState(initial?.openingHours||"");
+      const [storeId,setStoreId]=useState(initial?.storeId||"");
+      const [scraperEnabled,setScraperEnabled]=useState(initial?.scraperEnabled||false);
+      const [error,setError]=useState("");
+      function handleSave(){
+        if(!name.trim()){setError("נא להזין שם סניף");return;}
+        if(!storeId.trim()&&!editing){setError("נא להזין Store ID");return;}
+        const finalId=editing?initial.id:storeId.trim();
+        if(!editing&&existingIds.includes(finalId)){setError("Store ID זה כבר קיים");return;}
+        onSave({id:finalId,name:name.trim(),city:city.trim(),openingHours:openingHours.trim(),storeId:storeId.trim(),scraperEnabled,enabled:initial?.enabled??true});
+      }
+      return (
+        <div style={{display:"flex",flexDirection:"column",gap:14}}>
+          <div style={{fontWeight:700,fontSize:18,color:T.textMain}}>{editing?"✏️ עריכת סניף":"➕ סניף חדש"}</div>
+          <div><label style={labelStyle}>שם הסניף *</label><input value={name} onChange={e=>{setName(e.target.value);setError("");}} style={{...inputStyle,borderColor:error?T.danger:T.inputBorder}} placeholder='כפר סבא - הירוקה' autoFocus/>{error&&<div style={{fontSize:11,color:T.danger,marginTop:4}}>⚠️ {error}</div>}</div>
+          <div><label style={labelStyle}>עיר / אזור</label><input value={city} onChange={e=>setCity(e.target.value)} style={inputStyle} placeholder="כפר סבא"/></div>
+          <div><label style={labelStyle}>שעות פתיחה</label><input value={openingHours} onChange={e=>setOpeningHours(e.target.value)} style={inputStyle} placeholder="07:00-23:00" dir="ltr"/></div>
+          <div>
+            <label style={labelStyle}>Store ID — מספר הסניף ב-XML *</label>
+            <input value={storeId} onChange={e=>{setStoreId(e.target.value);setError("");}} style={inputStyle} placeholder="144" dir="ltr"/>
+            <div style={{fontSize:11,color:T.textMuted,marginTop:3}}>המספר שמופיע בשם קובץ ה-XML (לדוגמה: PriceFull...-<b>144</b>-...)</div>
+          </div>
+          <div style={{display:"flex",alignItems:"center",gap:10,background:T.primaryLight,borderRadius:8,padding:"10px 12px",cursor:"pointer"}} onClick={()=>setScraperEnabled(s=>!s)}>
+            <input type="checkbox" checked={scraperEnabled} onChange={e=>setScraperEnabled(e.target.checked)} style={{width:16,height:16,cursor:"pointer"}} onClick={e=>e.stopPropagation()}/>
+            <div><div style={{fontSize:13,fontWeight:700,color:T.primaryDark}}>🤖 סקראפר פעיל לסניף זה</div><div style={{fontSize:11,color:T.textSoft}}>GitHub Actions יוריד XML לסניף זה כל 12 שעות</div></div>
+          </div>
+          <div style={{display:"flex",gap:10}}>
+            <button onClick={onCancel} style={{flex:1,background:"#f5f7fa",color:T.textMid,border:`1px solid ${T.inputBorder}`,borderRadius:10,padding:12,cursor:"pointer",fontWeight:600}}>ביטול</button>
+            <button onClick={handleSave} style={{flex:2,background:T.headerBg,color:"#fff",border:"none",borderRadius:10,padding:12,cursor:"pointer",fontWeight:700}}>{editing?"שמור שינויים":"הוסף סניף"}</button>
+          </div>
+        </div>
+      );
+    }
+
+    function AdminPanel({ initialVendors, userToken, onClose, onVendorsUpdated }) {
+      const [vendors,setVendors]=useState(()=>JSON.parse(JSON.stringify(initialVendors)));
+      const [selectedId,setSelectedId]=useState(initialVendors[0]?.id||null);
+      const [vendorForm,setVendorForm]=useState(null);
+      const [branchForm,setBranchForm]=useState(null);
+      const [delConfirm,setDelConfirm]=useState(null);
+      const [saving,setSaving]=useState(false);
+      const [saveStatus,setSaveStatus]=useState(null);
+      const [saveError,setSaveError]=useState(null);
+      const [hasChanges,setHasChanges]=useState(false);
+      const selected=vendors.find(v=>v.id===selectedId);
+      function mark(){ setHasChanges(true); setSaveStatus(null); setSaveError(null); }
+      function addVendor(v)    { setVendors(vs=>[...vs,v]); setSelectedId(v.id); setVendorForm(null); mark(); }
+      function updateVendor(v) { setVendors(vs=>vs.map(x=>x.id===v.id?{...x,...v}:x)); setVendorForm(null); mark(); }
+      function toggleVendor(id){ setVendors(vs=>vs.map(v=>v.id===id?{...v,enabled:!v.enabled}:v)); mark(); }
+      function deleteVendor(id){ setVendors(vs=>vs.filter(v=>v.id!==id)); setSelectedId(vendors.find(v=>v.id!==id)?.id||null); setDelConfirm(null); mark(); }
+      function addBranch(b)    { setVendors(vs=>vs.map(v=>v.id!==selectedId?v:{...v,branches:[...v.branches,b]})); setBranchForm(null); mark(); }
+      function updateBranch(b) { setVendors(vs=>vs.map(v=>v.id!==selectedId?v:{...v,branches:v.branches.map(x=>x.id===b.id?{...x,...b}:x)})); setBranchForm(null); mark(); }
+      function toggleBranch(bid){ setVendors(vs=>vs.map(v=>v.id!==selectedId?v:{...v,branches:v.branches.map(b=>b.id===bid?{...b,enabled:!b.enabled}:b)})); mark(); }
+      function deleteBranch(bid){ setVendors(vs=>vs.map(v=>v.id!==selectedId?v:{...v,branches:v.branches.filter(b=>b.id!==bid)})); setDelConfirm(null); mark(); }
+      async function saveToKV(){
+        setSaving(true); setSaveStatus(null); setSaveError(null);
+        try{
+          const res=await fetch(`${API}/admin/vendors`,{method:"PUT",headers:{"Content-Type":"application/json","Authorization":`Bearer ${userToken}`},body:JSON.stringify(vendors)});
+          if(!res.ok){
+            const txt=await res.text().catch(()=>"");
+            const msg=`${res.status}${txt?" – "+txt.slice(0,200):""}`;
+            console.error("[CartWise] saveToKV failed:", msg);
+            setSaveError(msg);
+            throw new Error(msg);
+          }
+          setSaveStatus("ok"); setHasChanges(false); onVendorsUpdated(vendors);
+          setTimeout(()=>setSaveStatus(null),3000);
+        }catch(e){ setSaveStatus("err"); }
+        finally{ setSaving(false); }
+      }
+      const btnBase={border:"none",borderRadius:8,padding:"5px 10px",cursor:"pointer",fontSize:12,fontWeight:600};
+      return (
+        <div style={{position:"fixed",inset:0,background:"rgba(10,20,40,0.8)",zIndex:800,display:"flex",flexDirection:"column"}}>
+          <div style={{background:T.primaryDark,color:"#fff",padding:"12px 16px",display:"flex",alignItems:"center",justifyContent:"space-between",flexShrink:0}}>
+            <div style={{fontWeight:700,fontSize:18}}>⚙️ לוח ניהול — CartWise</div>
+            <div style={{display:"flex",gap:10,alignItems:"center"}}>
+              {saveStatus==="ok"&&<span style={{color:"#4cde80",fontSize:13,fontWeight:600}}>✅ נשמר!</span>}
+              {saveStatus==="err"&&<span title={saveError||""} style={{color:"#ff6b6b",fontSize:13,fontWeight:600,maxWidth:300,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",display:"inline-block",verticalAlign:"middle"}}>❌ שגיאה{saveError?` (${saveError})`:""}</span>}
+              {hasChanges&&<button onClick={saveToKV} disabled={saving} style={{background:saving?"#888":"#2ecc71",color:"#fff",border:"none",borderRadius:8,padding:"7px 16px",cursor:"pointer",fontWeight:700,fontSize:13}}>{saving?"שומר...":"💾 שמור שינויים"}</button>}
+              <button onClick={onClose} style={{background:"rgba(255,255,255,0.15)",border:"none",color:"#fff",borderRadius:8,padding:"7px 14px",cursor:"pointer",fontWeight:700,fontSize:14}}>✕ סגור</button>
+            </div>
+          </div>
+          <div dir="rtl" style={{flex:1,display:"flex",overflow:"hidden",background:T.pageBg}}>
+            <div style={{width:200,background:T.sidebarBg,borderLeft:`1px solid ${T.sidebarBorder}`,display:"flex",flexDirection:"column",flexShrink:0}}>
+              <div style={{padding:"10px 10px 6px",fontWeight:700,fontSize:11,color:T.textSoft,textTransform:"uppercase",letterSpacing:0.5,borderBottom:`1px solid ${T.sidebarBorder}`}}>רשתות</div>
+              <div style={{flex:1,overflowY:"auto"}}>
+                {vendors.map(v=>(
+                  <div key={v.id} onClick={()=>setSelectedId(v.id)} style={{padding:"9px 10px",cursor:"pointer",display:"flex",alignItems:"center",gap:8,background:selectedId===v.id?T.activeListBg:"transparent",borderRight:`3px solid ${selectedId===v.id?T.activeListBorder:"transparent"}`,opacity:v.enabled?1:0.45}}>
+                    <span style={{fontSize:20}}>{v.logoUrl?<img src={v.logoUrl} alt="" style={{width:22,height:22,objectFit:"contain",verticalAlign:"middle"}}/>:v.logo}</span>
+                    <div style={{flex:1,minWidth:0}}>
+                      <div style={{fontWeight:600,fontSize:13,color:T.textMain,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{v.name}</div>
+                      <div style={{fontSize:11,color:T.textSoft}}>{v.branches.filter(b=>b.enabled).length} סניפים</div>
+                    </div>
+                    {!v.enabled&&<span style={{fontSize:10,color:T.danger}}>●</span>}
+                  </div>
+                ))}
+              </div>
+              <div style={{padding:8,borderTop:`1px solid ${T.sidebarBorder}`}}>
+                <button onClick={()=>setVendorForm({})} style={{width:"100%",background:"#fff",color:T.primary,border:`2px dashed ${T.accent}`,borderRadius:8,padding:8,cursor:"pointer",fontWeight:700,fontSize:12}}>+ הוסף רשת</button>
+              </div>
+            </div>
+            <div style={{flex:1,display:"flex",flexDirection:"column",overflow:"hidden"}}>
+              {selected?(<>
+                <div style={{background:"#fff",padding:"12px 16px",borderBottom:`1px solid ${T.cardBorder}`,display:"flex",alignItems:"center",gap:12}}>
+                  <span style={{fontSize:32}}>{selected.logoUrl?<img src={selected.logoUrl} alt="" style={{width:36,height:36,objectFit:"contain"}}/>:selected.logo}</span>
+                  <div style={{flex:1}}>
+                    <div style={{fontWeight:700,fontSize:16,color:T.textMain}}>{selected.name}</div>
+                    <div style={{fontSize:12,color:T.textSoft}}>Chain ID: <span style={{fontFamily:"monospace"}}>{selected.chainId||"—"}</span> · {selected.enabled?<span style={{color:T.success,fontWeight:600}}>● פעיל</span>:<span style={{color:T.danger,fontWeight:600}}>● מושבת</span>}</div>
+                  </div>
+                  <div style={{display:"flex",gap:8}}>
+                    <button onClick={()=>toggleVendor(selected.id)} style={{...btnBase,background:selected.enabled?T.dangerBg:T.successBg,color:selected.enabled?T.danger:T.success,border:`1px solid ${selected.enabled?T.dangerBorder:T.successBorder}`}}>{selected.enabled?"השבת":"הפעל"}</button>
+                    <button onClick={()=>setVendorForm(selected)} style={{...btnBase,background:T.primaryLight,color:T.primary,border:`1px solid ${T.accent}`}}>✏️ ערוך</button>
+                    <button onClick={()=>setDelConfirm({type:"vendor",item:selected})} style={{...btnBase,background:T.dangerBg,color:T.danger,border:`1px solid ${T.dangerBorder}`}}>🗑️</button>
+                  </div>
+                </div>
+                <div style={{flex:1,overflowY:"auto",padding:"12px 16px"}}>
+                  <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:10}}>
+                    <div style={{fontWeight:700,fontSize:14,color:T.textMid}}>סניפים ({selected.branches.length})</div>
+                    <button onClick={()=>setBranchForm({})} style={{background:T.primary,color:"#fff",border:"none",borderRadius:8,padding:"7px 14px",cursor:"pointer",fontWeight:700,fontSize:13}}>+ הוסף סניף</button>
+                  </div>
+                  {selected.branches.length===0&&<div style={{textAlign:"center",padding:40,color:T.textMuted}}><div style={{fontSize:32,marginBottom:8}}>🏪</div><div>אין סניפים — לחץ "הוסף סניף"</div></div>}
+                  {selected.branches.map(b=>(
+                    <div key={b.id} style={{background:T.cardBg,border:`1px solid ${T.cardBorder}`,borderRadius:10,padding:"10px 14px",marginBottom:8,display:"flex",alignItems:"flex-start",gap:10,opacity:b.enabled?1:0.5}}>
+                      <div style={{flex:1,minWidth:0}}>
+                        <div style={{display:"flex",alignItems:"center",gap:8,flexWrap:"wrap",marginBottom:4}}>
+                          <span style={{fontWeight:700,fontSize:14,color:T.textMain}}>{b.name}</span>
+                          {b.scraperEnabled&&<span style={{background:"#e8f5e9",color:"#2e7d32",borderRadius:20,padding:"1px 8px",fontSize:10,fontWeight:700}}>🤖 סקראפר</span>}
+                          {!b.enabled&&<span style={{background:T.dangerBg,color:T.danger,borderRadius:20,padding:"1px 8px",fontSize:10,fontWeight:700}}>מושבת</span>}
+                        </div>
+                        <div style={{display:"flex",gap:14,flexWrap:"wrap",fontSize:12,color:T.textSoft}}>
+                          {b.city&&<span>📍 {b.city}</span>}
+                          {b.storeId&&<span>🔢 Store ID: <span style={{fontFamily:"monospace",fontWeight:600}}>{b.storeId}</span></span>}
+                          {b.openingHours&&<span>🕐 {b.openingHours}</span>}
+                        </div>
+                      </div>
+                      <div style={{display:"flex",gap:6,flexShrink:0}}>
+                        <button onClick={()=>toggleBranch(b.id)} style={{...btnBase,background:b.enabled?T.dangerBg:T.successBg,color:b.enabled?T.danger:T.success,border:`1px solid ${b.enabled?T.dangerBorder:T.successBorder}`,fontSize:11}}>{b.enabled?"השבת":"הפעל"}</button>
+                        <button onClick={()=>setBranchForm(b)} style={{...btnBase,background:T.primaryLight,color:T.primary,border:`1px solid ${T.accent}`,fontSize:11}}>✏️</button>
+                        <button onClick={()=>setDelConfirm({type:"branch",item:b})} style={{...btnBase,background:T.dangerBg,color:T.danger,border:`1px solid ${T.dangerBorder}`,fontSize:11}}>🗑️</button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </>):(
+                <div style={{flex:1,display:"flex",alignItems:"center",justifyContent:"center",color:T.textMuted}}><div style={{textAlign:"center"}}><div style={{fontSize:48,marginBottom:12}}>🏪</div><div>בחר רשת מהרשימה</div></div></div>
+              )}
+            </div>
+          </div>
+          {vendorForm!==null&&<Sheet onClose={()=>setVendorForm(null)}><VendorFormContent initial={vendorForm.id?vendorForm:null} existingIds={vendors.map(v=>v.id)} onSave={v=>vendorForm.id?updateVendor(v):addVendor(v)} onCancel={()=>setVendorForm(null)}/></Sheet>}
+          {branchForm!==null&&<Sheet onClose={()=>setBranchForm(null)}><BranchFormContent initial={branchForm.id?branchForm:null} existingIds={selected?.branches.map(b=>b.id)||[]} onSave={b=>branchForm.id?updateBranch(b):addBranch(b)} onCancel={()=>setBranchForm(null)}/></Sheet>}
+          {delConfirm&&<ConfirmDialog title={delConfirm.type==="vendor"?"מחיקת רשת":"מחיקת סניף"} message={delConfirm.type==="vendor"?`האם למחוק את הרשת "${delConfirm.item.name}"?`:`האם למחוק את הסניף "${delConfirm.item.name}"?`} confirmLabel="מחק" confirmDanger onConfirm={()=>delConfirm.type==="vendor"?deleteVendor(delConfirm.item.id):deleteBranch(delConfirm.item.id)} onCancel={()=>setDelConfirm(null)}/>}
+        </div>
+      );
+    }
+
+    function ListSheet({ initial, onClose, onSave, user, vendors }) {
+      const editing=!!initial;
+      const [name,setName]=useState(initial?.name||"");
+      const [vendor,setVendor]=useState(initial?.vendor||"");
+      const [branch,setBranch]=useState(initial?.branch||"");
+      const [emails,setEmails]=useState(initial?.sharedWith||[]);
+      const [nameError,setNameError]=useState("");
+      const activeVendors=(vendors||DEFAULT_VENDORS).filter(v=>v.enabled!==false&&v.branches?.some(b=>b.scraperEnabled&&b.enabled!==false));
+      const branches=vendor?(activeVendors.find(v=>v.id===vendor)?.branches||[]).filter(b=>b.enabled!==false&&b.scraperEnabled):[];
+      function handleSave(){
+        if(!name.trim()){setNameError("נא להזין שם");return;}
+        if(!vendor){setNameError("נא לבחור רשת");return;}
+        if(!branch){setNameError("נא לבחור סניף");return;}
+        onSave({name:name.trim(),vendor,branch,sharedWith:emails});
+      }
+      return (
+        <Sheet onClose={onClose}>
+          <div style={{fontWeight:700,fontSize:18,marginBottom:18,color:T.textMain}}>{editing?"✏️ עריכת רשימה":"✨ רשימה חדשה"}</div>
+          {editing&&<div style={{fontSize:13,color:T.danger,background:T.dangerBg,border:`1px solid ${T.dangerBorder}`,borderRadius:8,padding:"8px 12px",marginBottom:14}}>⚠️ שינוי רשת יעדכן את כל המחירים ברשימה</div>}
+          <div style={{display:"flex",flexDirection:"column",gap:14}}>
+            <div>
+              <label style={labelStyle}>שם הרשימה *</label>
+              <input value={name} onChange={e=>{setName(e.target.value);setNameError("");}} placeholder='לדוגמה: "קניות שבועיות"' style={{...inputStyle,borderColor:nameError?T.danger:T.inputBorder}} autoFocus/>
+              {nameError&&<div style={{fontSize:11,color:T.danger,marginTop:4}}>⚠️ {nameError}</div>}
+            </div>
+            <div>
+              <label style={labelStyle}>רשת *</label>
+              <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
+                {activeVendors.map(v=>(
+                  <button key={v.id} onClick={()=>{setVendor(v.id);setBranch("");}} style={{padding:"7px 13px",borderRadius:20,cursor:"pointer",fontSize:13,fontWeight:vendor===v.id?700:500,border:`2px solid ${vendor===v.id?T.primary:T.inputBorder}`,background:vendor===v.id?T.primaryLight:"#fff",color:vendor===v.id?T.primaryDark:T.textMid}}>
+                    {v.logoUrl?<img src={v.logoUrl} alt="" style={{width:16,height:16,objectFit:"contain",verticalAlign:"middle",marginLeft:4}}/>:v.logo} {v.name}
+                  </button>
+                ))}
+              </div>
+            </div>
+            {vendor&&<div><label style={labelStyle}>סניף *</label><select value={branch} onChange={e=>setBranch(e.target.value)} style={inputStyle}><option value="">-- בחר סניף --</option>{branches.map(b=><option key={b.id} value={b.id}>{b.name}{b.openingHours?` (${b.openingHours})`:""}</option>)}</select></div>}
+            <div><label style={labelStyle}>שתף עם (עד 5 כתובות)</label><EmailTagInput emails={emails} onChange={setEmails}/></div>
+            <button onClick={handleSave} style={{background:T.headerBg,color:"#fff",border:"none",borderRadius:12,padding:14,fontSize:16,fontWeight:700,cursor:"pointer"}}>{editing?"שמור שינויים 🔄":"צור רשימה 🛒"}</button>
+          </div>
+        </Sheet>
+      );
+    }
+
+    function GoogleLoginBtn({ onLogin }) {
+      const ref=useRef();
+      useEffect(()=>{
+        if(!window.google)return;
+        window.google.accounts.id.initialize({client_id:GOOGLE_CLIENT_ID,callback:resp=>{const p=JSON.parse(atob(resp.credential.split(".")[1]));onLogin({name:p.name,email:p.email,picture:p.picture,token:resp.credential});}});
+        window.google.accounts.id.renderButton(ref.current,{theme:"outline",size:"medium",text:"signin_with",locale:"he"});
+      },[]);
+      return <div ref={ref}/>;
+    }
+
+    function App() {
+      const [user,setUser]=useState(()=>{ try{ return JSON.parse(localStorage.getItem('cartwise_user'))||null; }catch{ return null; } });
+      const [googleReady,setGoogleReady]=useState(false);
+      const [vendors,setVendors]=useState(DEFAULT_VENDORS);
+      const [lists,setLists]=useState(loadLists);
+      const [activeId,setActiveId]=useState(()=>loadLists()[0]?.id||null);
+      const [showSidebar,setShowSidebar]=useState(false);
+      const [showListSheet,setShowListSheet]=useState(false);
+      const [editingList,setEditingList]=useState(null);
+      const [showProfile,setShowProfile]=useState(false);
+      const [showAdmin,setShowAdmin]=useState(false);
+      const [deleteConfirm,setDeleteConfirm]=useState(null);
+      const [searchQuery,setSearchQuery]=useState("");
+      const [suggestions,setSuggestions]=useState([]);
+      const [showSugg,setShowSugg]=useState(false);
+      const [searching,setSearching]=useState(false);
+      const [compareMode,setCompareMode]=useState(false);
+      const [toast,setToast]=useState(null);
+      const [manualForm,setManualForm]=useState(null);
+      const [compareData,setCompareData]=useState({});
+      const [compareLoading,setCompareLoading]=useState(false);
+      const [metaCache,setMetaCache]=useState({});
+      const searchTimeout=useRef();
+      const sbRef=useRef(null);
+      const syncTimeout=useRef();
+
+      const isAdmin=user?.email===ADMIN_EMAIL;
+      const activeList=lists.find(l=>l.id===activeId);
+      const getVendor=(id)=>vendors.find(v=>v.id===id);
+      const getBranch=(vId,bId)=>getVendor(vId)?.branches?.find(b=>b.id===bId);
+
+      useEffect(()=>{
+        const s=document.createElement("script"); s.src="https://accounts.google.com/gsi/client"; s.async=true; s.onload=()=>setGoogleReady(true); document.head.appendChild(s);
+        sbRef.current=initSB();
+        if("serviceWorker" in navigator) navigator.serviceWorker.register("sw.js").catch(()=>{});
+      },[]);
+      useEffect(()=>{
+        fetch(`${API}/vendors`).then(r=>r.ok?r.json():null).then(data=>{
+          if(Array.isArray(data)&&data.length>0){
+            // Merge: KV data takes priority, but add any new vendors from DEFAULT_VENDORS not yet in KV
+            const kvIds=new Set(data.map(v=>v.id));
+            const merged=[...data,...DEFAULT_VENDORS.filter(v=>!kvIds.has(v.id))];
+            setVendors(merged);
+          }
+        }).catch(()=>{});
+      },[]);
+      useEffect(()=>{ persistLists(lists); },[lists]);
+      // Fetch real comparison prices when compare mode is on
+      useEffect(()=>{
+        if(!compareMode){setCompareData({});return;}
+        if(!activeList?.items?.length) return;
+        setCompareLoading(true);
+        const others=vendors
+          .filter(v=>v.enabled!==false&&v.id!==activeList.vendor&&v.branches?.some(b=>b.scraperEnabled&&b.enabled!==false))
+          .map(v=>({vendor:v.id,store:v.branches.find(b=>b.scraperEnabled&&b.enabled!==false)?.storeId}))
+          .filter(v=>v.store);
+        if(!others.length){setCompareLoading(false);return;}
+        fetch(`${API}/compare`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({items:activeList.items.map(i=>({barcode:i.barcode})),vendors:others})})
+          .then(r=>r.ok?r.json():null).then(d=>{if(d)setCompareData(d);}).catch(()=>{}).finally(()=>setCompareLoading(false));
+      },[compareMode,activeId]);
+      // Fetch meta (price freshness) for active vendor/store
+      useEffect(()=>{
+        if(!activeList) return;
+        const key=`${activeList.vendor}:${activeList.branch}`;
+        if(metaCache[key]) return;
+        fetch(`${API}/meta?vendor=${activeList.vendor}&store=${activeList.branch}`)
+          .then(r=>r.ok?r.json():null).then(m=>{if(m?.updatedAt)setMetaCache(c=>({...c,[key]:m}));}).catch(()=>{});
+      },[activeList?.vendor,activeList?.branch]);
+      useEffect(()=>{
+        if(searchQuery.length<2){setSuggestions([]);setShowSugg(false);return;}
+        clearTimeout(searchTimeout.current);
+        searchTimeout.current=setTimeout(async()=>{
+          setSearching(true);
+          try{
+            const v=activeList?.vendor||"shufersal",s=activeList?.branch||"144";
+            const res=await fetch(`${API}/search?q=${encodeURIComponent(searchQuery)}&vendor=${v}&store=${s}`);
+            if(!res.ok)throw new Error();
+            const data=await res.json();
+            setSuggestions(Array.isArray(data)?data:[]);
+            setShowSugg(true);
+          }catch{ setSuggestions(sampleSearch(searchQuery)); setShowSugg(true); }
+          finally{ setSearching(false); }
+        },400);
+      },[searchQuery,activeList?.vendor,activeList?.branch]);
+
+      function showToast(msg){ setToast(msg); setTimeout(()=>setToast(null),2500); }
+      function toggleCheck(uid){ updateLists(ls=>{ const next=ls.map(l=>l.id!==activeId?l:{...l,items:l.items.map(i=>i.uid===uid?{...i,checked:!i.checked}:i)}); syncActiveList(next); return next; }); }
+      function clearChecked(){ updateLists(ls=>{ const next=ls.map(l=>l.id!==activeId?l:{...l,items:l.items.filter(i=>!i.checked)}); syncActiveList(next); return next; }); }
+      function ageLabel(updatedAt){ if(!updatedAt)return null; const h=Math.floor((Date.now()-new Date(updatedAt))/3600000); if(h<1)return"עודכן עכשיו"; if(h<24)return`עודכן לפני ${h}ש'`; const d=Math.floor(h/24); return d===1?"עודכן אתמול":`עודכן לפני ${d} ימים`; }
+      function updateLists(fn){ setLists(ls=>{ const next=fn(ls); persistLists(next); return next; }); }
+      async function handleLogin(u){
+        setUser(u); localStorage.setItem('cartwise_user',JSON.stringify(u)); setShowProfile(false); showToast(`שלום, ${u.name.split(" ")[0]}! 👋`);
+        if(sbRef.current){
+          try{
+            const dbLists=await dbLoad(sbRef.current, u.email);
+            if(dbLists.length>0){ setLists(dbLists); persistLists(dbLists); setActiveId(dbLists[0].id); }
+            else{
+              // First login — push existing localStorage lists to DB
+              const local=loadLists().map(l=>({...l,owner:l.owner||u.email}));
+              if(local.length>0){ for(const l of local) await dbSave(sbRef.current,l).catch(()=>{}); setLists(local); }
+            }
+          }catch(e){ console.error("DB load failed",e); showToast("⚠️ לא ניתן לטעון מהענן — נטען מהמכשיר"); }
+        }
+      }
+      function handleLogout(){ setUser(null); localStorage.removeItem('cartwise_user'); setShowProfile(false); setShowAdmin(false); setLists(loadLists()); setActiveId(loadLists()[0]?.id||null); }
+
+      function saveList({name,vendor,branch,sharedWith}){
+        let saved;
+        if(editingList){
+          saved={...editingList,name,vendor,branch,sharedWith,shared:sharedWith.length>0};
+          updateLists(ls=>ls.map(l=>l.id===editingList.id?saved:l));
+        }else{
+          saved={id:"list"+Date.now(),name,vendor,branch,shared:sharedWith.length>0,shareToken:Math.random().toString(36).slice(2),sharedWith,items:[],owner:user?.email||"anonymous"};
+          updateLists(ls=>[...ls,saved]); setActiveId(saved.id);
+        }
+        if(sbRef.current&&user) dbSave(sbRef.current,saved).catch(e=>console.error("DB save failed",e));
+        setShowListSheet(false); setEditingList(null); setShowSidebar(false);
+      }
+
+      function copyToVendor(targetVendor){
+        if(!activeList) return;
+        const targetBranch=targetVendor.branches?.find(b=>b.scraperEnabled&&b.enabled!==false)||targetVendor.branches?.find(b=>b.enabled!==false);
+        if(!targetBranch) return;
+        const existing=lists.find(l=>l.vendor===targetVendor.id);
+        if(existing){
+          const existingNames=new Set(existing.items.map(i=>i.name));
+          const newItems=activeList.items.filter(i=>!existingNames.has(i.name));
+          const updated={...existing,items:[...existing.items,...newItems]};
+          updateLists(ls=>ls.map(l=>l.id===existing.id?updated:l));
+          if(sbRef.current&&user) dbSave(sbRef.current,updated).catch(()=>{});
+          setActiveId(existing.id);
+          showToast(`הועתק לרשימה ב${targetVendor.name} ✅`);
+        }else{
+          const newList={id:"list"+Date.now(),name:activeList.name+" – "+targetVendor.name,vendor:targetVendor.id,branch:targetBranch.id,shared:false,shareToken:Math.random().toString(36).slice(2),sharedWith:[],items:[...activeList.items],owner:user?.email||"anonymous"};
+          updateLists(ls=>[...ls,newList]);
+          setActiveId(newList.id);
+          if(sbRef.current&&user) dbSave(sbRef.current,newList).catch(()=>{});
+          showToast(`נוצרה רשימה חדשה ב${targetVendor.name} ✅`);
+        }
+        setCompareMode(false);
+      }
+
+      function executeDelete(list){
+        const isOwner=!list.owner||list.owner===user?.email||list.owner==="anonymous";
+        updateLists(ls=>ls.filter(l=>l.id!==list.id));
+        showToast(isOwner?"הרשימה נמחקה":"הרשימה הוסרה מהתצוגה שלך");
+        if(activeId===list.id)setActiveId(lists.find(l=>l.id!==list.id)?.id||null);
+        setDeleteConfirm(null);
+        if(sbRef.current&&user&&isOwner) dbDelete(sbRef.current,list.id).catch(e=>console.error("DB delete failed",e));
+      }
+
+      function syncActiveList(newLists){
+        if(!sbRef.current||!user)return;
+        clearTimeout(syncTimeout.current);
+        syncTimeout.current=setTimeout(()=>{
+          const l=newLists.find(x=>x.id===activeId);
+          if(l) dbSave(sbRef.current,l).catch(e=>console.error("DB sync failed",e));
+        },800);
+      }
+      function addItem(product){ updateLists(ls=>{ const next=ls.map(l=>{ if(l.id!==activeId||l.items.find(i=>i.barcode===product.barcode))return l; return{...l,items:[...l.items,{uid:Date.now().toString(),...product,qty:1}]}; }); syncActiveList(next); return next; }); setSearchQuery(""); setSuggestions([]); setShowSugg(false); }
+      function addManualItem({name,price}){
+        if(!name.trim()) return;
+        const product={barcode:`manual-${Date.now()}`,name:name.trim(),company:"",price:parseFloat(price)||0,unit:"",quantity:"",unitQty:"",manual:true};
+        addItem(product);
+        setManualForm(null);
+        if(price&&parseFloat(price)>0&&activeList){
+          fetch(`${API}/product`,{method:"POST",headers:{"Content-Type":"application/json"},
+            body:JSON.stringify({vendor:activeList.vendor,store:activeList.branch,name:product.name,price:product.price})
+          }).catch(()=>{});
+        }
+      }
+      function removeItem(uid){ updateLists(ls=>{ const next=ls.map(l=>l.id!==activeId?l:{...l,items:l.items.filter(i=>i.uid!==uid)}); syncActiveList(next); return next; }); }
+      function changeQty(uid,d){ updateLists(ls=>{ const next=ls.map(l=>l.id!==activeId?l:{...l,items:l.items.map(i=>i.uid===uid?{...i,qty:Math.max(1,i.qty+d)}:i)}); syncActiveList(next); return next; }); }
+      function copyShareLink(){ navigator.clipboard?.writeText(`https://cartwise.app/shared/${activeList.shareToken}`); showToast("✅ הקישור הועתק!"); }
+
+      const total=activeList?.items.reduce((s,i)=>s+i.price*i.qty,0)||0;
+
+      const SidebarContent=()=>(
+        <div style={{display:"flex",flexDirection:"column",height:"100%",background:T.sidebarBg}}>
+          {user?(
+            <div style={{padding:"14px 12px",background:T.primaryLight,borderBottom:`1px solid ${T.sidebarBorder}`,display:"flex",alignItems:"center",gap:10}}>
+              <img src={user.picture} alt="" style={{width:36,height:36,borderRadius:"50%",border:`2px solid ${T.primary}`}}/>
+              <div style={{flex:1,minWidth:0}}><div style={{fontWeight:700,fontSize:13,color:T.textMain,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{user.name}</div><div style={{fontSize:11,color:T.textSoft,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{user.email}</div></div>
+              <button onClick={handleLogout} style={{background:"none",border:`1px solid ${T.dangerBorder}`,color:T.danger,borderRadius:6,padding:"3px 8px",cursor:"pointer",fontSize:11,fontWeight:600}}>יציאה</button>
+            </div>
+          ):(
+            <div style={{padding:"14px 12px",background:"#fff",borderBottom:`1px solid ${T.sidebarBorder}`}}>
+              <div style={{fontSize:12,color:T.textSoft,marginBottom:10,fontWeight:500}}>התחבר לסנכרון הרשימות בין מכשירים</div>
+              {googleReady?<GoogleLoginBtn onLogin={handleLogin}/>:<button onClick={()=>showToast("Google SDK טוען...")} style={{background:T.primary,color:"#fff",border:"none",borderRadius:8,padding:"9px 14px",cursor:"pointer",fontWeight:700,fontSize:13,width:"100%"}}>התחבר עם Google</button>}
+            </div>
+          )}
+          {isAdmin&&<button onClick={()=>{setShowAdmin(true);setShowSidebar(false);}} style={{margin:"8px 10px 0",background:T.primaryDark,color:"#fff",border:"none",borderRadius:8,padding:"8px 14px",cursor:"pointer",fontWeight:700,fontSize:13,textAlign:"right"}}>⚙️ לוח ניהול</button>}
+          <div style={{padding:"10px 12px 4px",fontWeight:700,fontSize:11,color:T.textSoft,textTransform:"uppercase",letterSpacing:0.5,marginTop:8}}>הרשימות שלי</div>
+          <div style={{flex:1,overflowY:"auto"}}>
+            {lists.length===0&&<div style={{padding:"20px 12px",color:T.textMuted,fontSize:13,textAlign:"center"}}>אין רשימות עדיין</div>}
+            {lists.map(l=>{
+              const v=getVendor(l.vendor),b=getBranch(l.vendor,l.branch),isActive=l.id===activeId;
+              const t=l.items.reduce((s,i)=>s+i.price*i.qty,0);
+              return(
+                <div key={l.id} style={{padding:"10px 12px",background:isActive?T.activeListBg:"transparent",borderRight:`3px solid ${isActive?T.activeListBorder:"transparent"}`,display:"flex",alignItems:"center",gap:8}}>
+                  <div onClick={()=>{setActiveId(l.id);setShowSidebar(false);}} style={{flex:1,minWidth:0,cursor:"pointer"}}>
+                    <div style={{fontWeight:600,fontSize:13,color:isActive?T.primaryDark:T.textMain,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{l.name}</div>
+                    <div style={{fontSize:11,color:T.textSoft,marginTop:1}}>{v?.logo} {v?.name} · {b?.name||"—"}</div>
+                    <div style={{display:"flex",gap:4,marginTop:2,flexWrap:"wrap"}}>
+                      {l.shared&&<span style={{background:T.sharedBadgeBg,color:T.sharedBadgeText,borderRadius:8,padding:"1px 6px",fontSize:10,fontWeight:600}}>משותף</span>}
+                      {t>0&&<span style={{fontWeight:700,fontSize:12,color:T.primary}}>₪{t.toFixed(2)}</span>}
+                    </div>
+                  </div>
+                  <button onClick={e=>{e.stopPropagation();setDeleteConfirm(l);}} style={{background:"none",border:"none",cursor:"pointer",color:T.textMuted,fontSize:15,padding:4,flexShrink:0,borderRadius:6}}>🗑️</button>
+                </div>
+              );
+            })}
+          </div>
+          <div style={{padding:"10px 12px",borderTop:`1px solid ${T.sidebarBorder}`}}>
+            <button onClick={()=>{setEditingList(null);setShowListSheet(true);}} style={{width:"100%",background:"#fff",color:T.primary,border:`2px dashed ${T.accent}`,borderRadius:8,padding:10,cursor:"pointer",fontWeight:700,fontSize:13}}>+ רשימה חדשה</button>
+          </div>
+        </div>
+      );
+
+      return (
+        <div dir="rtl" style={{fontFamily:"'Segoe UI',Arial,sans-serif",background:T.pageBg,minHeight:"100vh",color:T.textMain}}>
+          <div style={{background:T.headerBg,color:"#fff",padding:"12px 16px",display:"flex",alignItems:"center",justifyContent:"space-between",boxShadow:"0 2px 12px rgba(20,40,80,0.3)",position:"sticky",top:0,zIndex:100}}>
+            <div style={{display:"flex",alignItems:"center",gap:10}}>
+              <button onClick={()=>setShowSidebar(s=>!s)} style={{background:"none",border:"none",color:"#fff",fontSize:22,cursor:"pointer",padding:0,lineHeight:1}}>☰</button>
+              <span style={{fontSize:22}}>🛒</span>
+              <div>
+                <div style={{fontWeight:700,fontSize:18,letterSpacing:0.3}}>CartWise</div>
+                {activeList&&<div style={{fontSize:11,opacity:0.8}}>{activeList.name}</div>}
+              </div>
+            </div>
+            <div style={{display:"flex",gap:8,alignItems:"center"}}>
+              {isAdmin&&<button onClick={()=>setShowAdmin(true)} style={{background:"rgba(255,255,255,0.15)",border:"1px solid rgba(255,255,255,0.4)",borderRadius:20,padding:"5px 10px",color:"#fff",cursor:"pointer",fontSize:12,fontWeight:600}} title="לוח ניהול">⚙️</button>}
+              <button onClick={()=>setCompareMode(m=>!m)} style={{background:compareMode?"rgba(255,255,255,0.95)":"rgba(255,255,255,0.22)",color:compareMode?T.primaryDark:"#fff",border:`1px solid ${compareMode?"transparent":"rgba(255,255,255,0.5)"}`,borderRadius:20,padding:"5px 12px",cursor:"pointer",fontWeight:700,fontSize:12}}>{compareMode?"✕ סגור":"השוואה"}</button>
+              {user?(
+                <img onClick={()=>setShowProfile(p=>!p)} src={user.picture} alt="" style={{width:32,height:32,borderRadius:"50%",border:"2px solid rgba(255,255,255,0.7)",cursor:"pointer"}}/>
+              ):(
+                <button onClick={()=>setShowSidebar(true)} style={{background:"rgba(255,255,255,0.15)",border:"1px solid rgba(255,255,255,0.5)",borderRadius:20,padding:"5px 12px",color:"#fff",cursor:"pointer",fontSize:12,fontWeight:600,display:"flex",alignItems:"center",gap:6}}>
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="white"><path d="M12 12c2.7 0 4.8-2.1 4.8-4.8S14.7 2.4 12 2.4 7.2 4.5 7.2 7.2 9.3 12 12 12zm0 2.4c-3.2 0-9.6 1.6-9.6 4.8v2.4h19.2v-2.4c0-3.2-6.4-4.8-9.6-4.8z"/></svg>
+                  התחבר
+                </button>
+              )}
+            </div>
+          </div>
+
+          {showProfile&&user&&(
+            <div style={{position:"fixed",top:56,left:16,background:"#fff",borderRadius:12,boxShadow:"0 8px 24px rgba(20,40,80,0.18)",padding:16,zIndex:300,minWidth:220,border:`1px solid ${T.cardBorder}`}} dir="rtl">
+              <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:12}}>
+                <img src={user.picture} alt="" style={{width:44,height:44,borderRadius:"50%",border:`2px solid ${T.primary}`}}/>
+                <div><div style={{fontWeight:700,color:T.textMain}}>{user.name}</div><div style={{fontSize:12,color:T.textSoft}}>{user.email}</div></div>
+              </div>
+              {isAdmin&&<button onClick={()=>{setShowAdmin(true);setShowProfile(false);}} style={{width:"100%",background:T.primaryLight,color:T.primaryDark,border:`1px solid ${T.accent}`,borderRadius:8,padding:8,cursor:"pointer",fontWeight:600,fontSize:13,marginBottom:8}}>⚙️ לוח ניהול</button>}
+              <button onClick={handleLogout} style={{width:"100%",background:T.dangerBg,color:T.danger,border:`1px solid ${T.dangerBorder}`,borderRadius:8,padding:8,cursor:"pointer",fontWeight:600,fontSize:13}}>יציאה מהחשבון</button>
+            </div>
+          )}
+
+          <div style={{display:"flex",height:"calc(100vh - 56px)",position:"relative"}}>
+            {showSidebar&&(
+              <div style={{position:"fixed",inset:0,zIndex:200,display:"flex"}}>
+                <div style={{width:270,background:T.sidebarBg,boxShadow:"4px 0 20px rgba(20,40,80,0.2)",height:"100%",display:"flex",flexDirection:"column"}}>
+                  <div style={{padding:"12px 12px 8px",display:"flex",justifyContent:"space-between",alignItems:"center",borderBottom:`1px solid ${T.sidebarBorder}`}}>
+                    <span style={{fontWeight:700,fontSize:16,color:T.textMain}}>🛒 CartWise</span>
+                    <button onClick={()=>setShowSidebar(false)} style={{background:"none",border:"none",fontSize:20,cursor:"pointer",color:T.textSoft}}>✕</button>
+                  </div>
+                  <div style={{flex:1,overflowY:"auto"}}><SidebarContent/></div>
+                </div>
+                <div style={{flex:1,background:"rgba(20,40,70,0.45)"}} onClick={()=>setShowSidebar(false)}/>
+              </div>
+            )}
+            <div style={{width:240,background:T.sidebarBg,borderLeft:`1px solid ${T.sidebarBorder}`,flexDirection:"column",display:"none"}} className="dsk-sidebar">
+              <SidebarContent/>
+            </div>
+
+            <div style={{flex:1,display:"flex",flexDirection:"column",overflow:"hidden",minWidth:0}}>
+              {activeList?(<>
+                <div style={{background:"#fff",padding:"10px 16px",borderBottom:`1px solid ${T.cardBorder}`,display:"flex",alignItems:"center",gap:10}}>
+                  <div style={{flex:1,minWidth:0}}>
+                    <div style={{fontWeight:700,fontSize:15,color:T.textMain,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{activeList.name}</div>
+                    <button onClick={()=>{setEditingList(activeList);setShowListSheet(true);}} style={{background:"none",border:"none",padding:0,cursor:"pointer",display:"flex",alignItems:"center",gap:4,marginTop:3}}>
+                      <span style={{fontSize:13}}>{getVendor(activeList.vendor)?.logo}</span>
+                      <span style={{fontSize:12,color:T.textMid,fontWeight:600}}>{getVendor(activeList.vendor)?.name}</span>
+                      <span style={{fontSize:12,color:T.textMuted}}>·</span>
+                      <span style={{fontSize:12,color:T.textMid,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis",maxWidth:120}}>{getBranch(activeList.vendor,activeList.branch)?.name||"בחר סניף"}</span>
+                      {ageLabel(metaCache[`${activeList.vendor}:${activeList.branch}`]?.updatedAt)&&<span style={{fontSize:10,color:T.textMuted,whiteSpace:"nowrap",flexShrink:0}}>· {ageLabel(metaCache[`${activeList.vendor}:${activeList.branch}`]?.updatedAt)}</span>}
+                      <span style={{fontSize:11,color:T.accent,whiteSpace:"nowrap"}}>✏️ שנה</span>
+                    </button>
+                  </div>
+                  <div style={{display:"flex",gap:6,flexShrink:0}}>
+                    {activeList.shared?(
+                      <button onClick={copyShareLink} style={{background:T.successBg,color:T.success,border:`1px solid ${T.successBorder}`,borderRadius:8,padding:"6px 10px",cursor:"pointer",fontSize:16}}>🔗</button>
+                    ):(
+                      <button onClick={()=>{setEditingList(activeList);setShowListSheet(true);}} style={{background:"#f5f7fa",color:T.textMid,border:`1px solid ${T.inputBorder}`,borderRadius:8,padding:"5px 10px",cursor:"pointer",fontSize:12,fontWeight:600,whiteSpace:"nowrap"}}>🔒 פרטי</button>
+                    )}
+                  </div>
+                </div>
+
+                {compareMode&&(
+                  <div style={{background:"#eef3fa",borderBottom:`1px solid ${T.sidebarBorder}`,padding:"10px 16px",overflowX:"auto"}}>
+                    <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:8}}>
+                      <div style={{fontWeight:700,fontSize:12,color:T.primaryDark}}>⚖️ השוואת רשתות</div>
+                      {compareLoading&&<span style={{fontSize:11,color:T.textSoft}}>⏳ טוען מחירים...</span>}
+                    </div>
+                    <div style={{display:"flex",gap:8}}>
+                      {(()=>{
+                        const cards=vendors
+                          .filter(v=>v.enabled!==false&&v.branches?.some(b=>b.scraperEnabled&&b.enabled!==false))
+                          .map(v=>{
+                            const branch=v.branches.find(b=>b.scraperEnabled&&b.enabled!==false);
+                            const storeId=branch?.storeId||"";
+                            const isActive=v.id===activeList?.vendor;
+                            if(isActive) return {v,storeId,t:total,found:activeList.items.length,n:activeList.items.length,isActive:true};
+                            const data=compareData[`${v.id}:${storeId}`]||{};
+                            let t=0,found=0;
+                            (activeList?.items||[]).forEach(item=>{const p=data[item.barcode];if(p!==undefined){t+=p*item.qty;found++;}else t+=item.price*item.qty;});
+                            return {v,storeId,t,found,n:activeList?.items?.length||0,isActive:false};
+                          })
+                          .sort((a,b)=>a.t-b.t);
+                        return cards.map((card,i)=>(
+                          <div key={card.v.id} style={{background:"#fff",borderRadius:10,padding:"6px 10px",border:`2px solid ${i===0?T.primary:card.isActive?T.accent:T.cardBorder}`,minWidth:90,textAlign:"center",flexShrink:0}}>
+                            {i===0&&<div style={{fontSize:9,color:T.primary,fontWeight:700}}>🏆 הזול</div>}
+                            {card.isActive&&i!==0&&<div style={{fontSize:9,color:T.accent,fontWeight:700}}>הרשימה שלי</div>}
+                            <div style={{fontSize:18}}>{card.v.logo}</div>
+                            <div style={{fontWeight:600,fontSize:11,color:T.textMid}}>{card.v.name}</div>
+                            {compareLoading&&!card.isActive
+                              ?<div style={{fontSize:13,color:T.textMuted,fontWeight:700}}>...</div>
+                              :<div style={{fontWeight:700,fontSize:13,color:i===0?T.primary:T.textMid}}>₪{card.t.toFixed(2)}</div>}
+                            {!card.isActive&&card.n>0&&card.found<card.n&&!compareLoading&&(
+                              <div style={{fontSize:9,color:T.textMuted}}>{card.found}/{card.n} נמצאו</div>
+                            )}
+                            {!card.isActive&&activeList?.items?.length>0&&(
+                              <button onClick={()=>copyToVendor(card.v)} style={{marginTop:4,background:T.primaryLight,color:T.primaryDark,border:`1px solid ${T.accent}`,borderRadius:6,padding:"2px 6px",cursor:"pointer",fontSize:9,fontWeight:700,width:"100%"}}>העתק</button>
+                            )}
+                          </div>
+                        ));
+                      })()}
+                    </div>
+                  </div>
+                )}
+
+                <div style={{padding:"12px 16px 0",position:"relative"}}>
+                  <div style={{position:"relative"}}>
+                    <input value={searchQuery} onChange={e=>setSearchQuery(e.target.value)} onFocus={()=>suggestions.length>0&&setShowSugg(true)} placeholder="🔍 חפש מוצר להוספה לרשימה..." style={{...inputStyle,boxShadow:"0 2px 8px rgba(30,58,95,0.08)",paddingLeft:36}} onKeyDown={e=>e.key==="Escape"&&(setShowSugg(false),setSearchQuery(""))}/>
+                    {searching&&<div style={{position:"absolute",left:10,top:"50%",transform:"translateY(-50%)",fontSize:14,color:T.textMuted}}>⏳</div>}
+                  </div>
+                  {showSugg&&suggestions.length>0&&(
+                    <div style={{position:"absolute",top:"calc(100% + 4px)",right:16,left:16,background:"#fff",border:`1px solid ${T.cardBorder}`,borderRadius:12,boxShadow:"0 8px 24px rgba(30,58,95,0.14)",zIndex:100,maxHeight:300,overflowY:"auto"}}>
+                      {suggestions.map((p,i)=>(
+                        <div key={i} onClick={()=>addItem(p)} style={{padding:"10px 14px",cursor:"pointer",display:"flex",alignItems:"center",gap:10,borderBottom:"1px solid #f3f6fb"}} onMouseEnter={e=>e.currentTarget.style.background=T.primaryLight} onMouseLeave={e=>e.currentTarget.style.background="#fff"}>
+                          <span style={{fontSize:26,flexShrink:0}}>{emojiFor(p.name)}</span>
+                          <div style={{flex:1,minWidth:0}}><div style={{fontWeight:600,fontSize:13,color:T.textMain,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{p.name}</div><div style={{fontSize:11,color:T.textSoft}}>{p.company}</div></div>
+                          <div style={{fontWeight:700,color:T.primary,fontSize:14,flexShrink:0}}>₪{p.price?.toFixed(2)}</div>
+                        </div>
+                      ))}
+                      <div onClick={()=>{setManualForm({name:searchQuery,price:""});setSuggestions([]);}} style={{padding:"10px 14px",cursor:"pointer",display:"flex",alignItems:"center",gap:8,color:T.textSoft,fontSize:13,borderTop:`1px solid ${T.cardBorder}`}} onMouseEnter={e=>e.currentTarget.style.background=T.primaryLight} onMouseLeave={e=>e.currentTarget.style.background="#fff"}>
+                        <span>➕</span><span>לא מצאת? הוסף ידנית</span>
+                      </div>
+                    </div>
+                  )}
+                  {showSugg&&!searching&&suggestions.length===0&&searchQuery.length>=2&&!manualForm&&(
+                    <div style={{position:"absolute",top:"calc(100% + 4px)",right:16,left:16,background:"#fff",border:`1px solid ${T.cardBorder}`,borderRadius:12,zIndex:100,overflow:"hidden"}}>
+                      <div style={{padding:"12px 14px",textAlign:"center",color:T.textSoft,fontSize:13,borderBottom:`1px solid ${T.cardBorder}`}}>לא נמצאו מוצרים עבור "{searchQuery}"</div>
+                      <div onClick={()=>setManualForm({name:searchQuery,price:""})} style={{padding:"10px 14px",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",gap:8,color:T.primary,fontSize:13,fontWeight:600}} onMouseEnter={e=>e.currentTarget.style.background=T.primaryLight} onMouseLeave={e=>e.currentTarget.style.background="#fff"}>
+                        <span>➕</span><span>הוסף ידנית</span>
+                      </div>
+                    </div>
+                  )}
+                  {manualForm&&(
+                    <div style={{position:"absolute",top:"calc(100% + 4px)",right:16,left:16,background:"#fff",border:`1px solid ${T.primary}`,borderRadius:12,zIndex:100,padding:14,boxShadow:"0 8px 24px rgba(30,58,95,0.14)"}}>
+                      <div style={{fontWeight:600,fontSize:13,color:T.textMain,marginBottom:10}}>➕ הוסף מוצר ידנית</div>
+                      <input value={manualForm.name} onChange={e=>setManualForm(f=>({...f,name:e.target.value}))} placeholder="שם המוצר *" style={{...inputStyle,marginBottom:8,fontSize:13}}/>
+                      <input value={manualForm.price} onChange={e=>setManualForm(f=>({...f,price:e.target.value}))} placeholder="מחיר ₪ (אופציונלי — ישמר בKV)" type="number" min="0" step="0.01" style={{...inputStyle,marginBottom:10,fontSize:13}}/>
+                      <div style={{display:"flex",gap:8}}>
+                        <button onClick={()=>addManualItem(manualForm)} style={{flex:1,background:T.primary,color:"#fff",border:"none",borderRadius:8,padding:"8px 0",fontSize:13,fontWeight:600,cursor:"pointer"}}>הוסף לרשימה</button>
+                        <button onClick={()=>{setManualForm(null);setShowSugg(false);}} style={{flex:1,background:"#fff",color:T.textMid,border:`1px solid ${T.inputBorder}`,borderRadius:8,padding:"8px 0",fontSize:13,cursor:"pointer"}}>ביטול</button>
+                      </div>
+                      {manualForm.price&&parseFloat(manualForm.price)>0&&<div style={{fontSize:11,color:T.textMuted,marginTop:6,textAlign:"center"}}>המוצר ישמר אוטומטית ב-KV לחיפושים עתידיים</div>}
+                    </div>
+                  )}
+                </div>
+
+                <div style={{flex:1,overflowY:"auto",padding:"10px 16px 80px"}} onClick={()=>setShowSugg(false)}>
+                  {activeList.items.length===0?(
+                    <div style={{textAlign:"center",padding:"50px 20px",color:T.textMuted}}>
+                      <div style={{fontSize:48,marginBottom:12}}>🛒</div>
+                      <div style={{fontWeight:600,fontSize:16,color:T.textSoft}}>הרשימה ריקה</div>
+                      <div style={{fontSize:13,marginTop:4}}>חפש מוצר למעלה כדי להתחיל</div>
+                    </div>
+                  ):[...activeList.items].sort((a,b)=>(a.checked?1:0)-(b.checked?1:0)).map(item=>(
+                    <div key={item.uid} style={{background:T.cardBg,borderRadius:12,padding:"10px 12px",display:"flex",alignItems:"center",gap:10,boxShadow:T.cardShadow,marginBottom:8,border:`1px solid ${item.checked?T.successBorder:T.cardBorder}`,opacity:item.checked?0.55:1,transition:"opacity .15s"}}>
+                      <button onClick={()=>toggleCheck(item.uid)} title={item.checked?"בטל סימון":"סמן כנלקח"} style={{width:26,height:26,borderRadius:"50%",border:`2px solid ${item.checked?T.success:T.inputBorder}`,background:item.checked?T.success:"transparent",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0,color:"#fff",fontSize:13,padding:0,transition:"all .15s"}}>
+                        {item.checked?"✓":""}
+                      </button>
+                      <div style={{flex:1,minWidth:0}}>
+                        <div style={{fontWeight:600,fontSize:13,color:T.textMain,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis",textDecoration:item.checked?"line-through":"none"}}>{item.name}</div>
+                        <div style={{fontSize:11,color:T.textSoft}}>{item.company}</div>
+                        <div style={{fontSize:12,color:T.textMid,marginTop:1}}>₪{item.price?.toFixed(2)} ליחידה</div>
+                      </div>
+                      <div style={{display:"flex",alignItems:"center",gap:4,flexShrink:0}}>
+                        <button onClick={()=>changeQty(item.uid,-1)} style={qtyBtn}>−</button>
+                        <span style={{fontWeight:700,minWidth:22,textAlign:"center",fontSize:14,color:T.textMain}}>{item.qty}</span>
+                        <button onClick={()=>changeQty(item.uid,1)} style={qtyBtn}>+</button>
+                      </div>
+                      <div style={{minWidth:54,textAlign:"left",flexShrink:0}}><div style={{fontWeight:700,fontSize:14,color:T.primary}}>₪{(item.price*item.qty).toFixed(2)}</div></div>
+                      <button onClick={()=>removeItem(item.uid)} style={{background:T.dangerBg,border:`1px solid ${T.dangerBorder}`,borderRadius:8,cursor:"pointer",color:T.danger,fontSize:14,padding:"4px 7px",flexShrink:0}}>🗑️</button>
+                    </div>
+                  ))}
+                  {activeList.items.some(i=>i.checked)&&(
+                    <div style={{textAlign:"center",padding:"4px 0 8px"}}>
+                      <button onClick={clearChecked} style={{background:"none",border:`1px solid ${T.inputBorder}`,borderRadius:20,padding:"5px 16px",cursor:"pointer",fontSize:12,color:T.textSoft,fontWeight:600}}>
+                        🗑️ נקה מסומנים ({activeList.items.filter(i=>i.checked).length})
+                      </button>
+                    </div>
+                  )}
+                </div>
+
+                <div style={{position:"sticky",bottom:0,background:"#fff",borderTop:`1px solid ${T.cardBorder}`,padding:"12px 16px",display:"flex",alignItems:"center",justifyContent:"space-between",boxShadow:"0 -2px 8px rgba(30,58,95,0.07)"}}>
+                  <div style={{fontSize:13,color:T.textSoft,fontWeight:500}}>{activeList.items.reduce((s,i)=>s+i.qty,0)} פריטים בסל</div>
+                  <div style={{display:"flex",alignItems:"center",gap:8}}>
+                    <span style={{fontSize:14,color:T.textMid,fontWeight:500}}>סה״כ לתשלום:</span>
+                    <span style={{fontWeight:800,fontSize:22,color:T.totalColor}}>₪{total.toFixed(2)}</span>
+                  </div>
+                </div>
+              </>):(
+                <div style={{flex:1,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",color:T.textMuted,gap:12}}>
+                  <div style={{fontSize:48}}>🛒</div>
+                  <div style={{fontWeight:600,fontSize:16,color:T.textSoft}}>אין רשימות עדיין</div>
+                  <button onClick={()=>setShowListSheet(true)} style={{background:T.headerBg,color:"#fff",border:"none",borderRadius:10,padding:"10px 22px",cursor:"pointer",fontWeight:600,fontSize:14}}>+ צור רשימה ראשונה</button>
+                </div>
+              )}
+            </div>
+          </div>
+
+          {showAdmin&&isAdmin&&<AdminPanel initialVendors={vendors} userToken={user?.token} onClose={()=>setShowAdmin(false)} onVendorsUpdated={v=>setVendors(v)}/>}
+          {showListSheet&&<ListSheet initial={editingList} onClose={()=>{setShowListSheet(false);setEditingList(null);}} onSave={saveList} user={user} vendors={vendors}/>}
+          {deleteConfirm&&<ConfirmDialog title="מחיקת רשימה" message={`האם למחוק את הרשימה "${deleteConfirm.name}"?`} confirmLabel="מחק" confirmDanger onConfirm={()=>executeDelete(deleteConfirm)} onCancel={()=>setDeleteConfirm(null)}/>}
+          {toast&&<div style={{position:"fixed",bottom:80,left:"50%",transform:"translateX(-50%)",background:T.primaryDark,color:"#fff",padding:"10px 20px",borderRadius:10,fontWeight:600,fontSize:14,zIndex:999,whiteSpace:"nowrap"}}>{toast}</div>}
+          <style>{`.dsk-sidebar{display:none!important}@media(min-width:768px){.dsk-sidebar{display:flex!important}}`}</style>
+        </div>
+      );
+    }
+
+    const root = ReactDOM.createRoot(document.getElementById("root"));
+    root.render(<App />);
+  </script>
+</body>
+</html>
