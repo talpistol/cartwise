@@ -1,4 +1,4 @@
-name: Deploy to Cloudflare Pages
+name: Deploy to Cloudflare Workers
 
 on:
   push:
@@ -11,8 +11,17 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Deploy to Cloudflare Pages
-        run: npx wrangler pages deploy . --project-name cartwise --commit-dirty=true
+      - name: Prepare frontend files
+        run: mkdir -p public && cp index.html manifest.json sw.js icon.svg public/
+
+      - name: Deploy frontend Worker
+        run: |
+          cat > wrangler-frontend.toml << 'EOF'
+          name = "cartwise"
+          compatibility_date = "2024-01-01"
+          assets = { directory = "public" }
+          EOF
+          npx wrangler deploy --config wrangler-frontend.toml
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CF_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CF_ACCOUNT_ID }}
